@@ -1,0 +1,14 @@
+*{
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+canvas{
+    background: purple;
+}
+body{
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
