@@ -3,9 +3,11 @@ const GAME_HEIGHT = 720;
 const ROW_GAP = 35;
 const COLUMN_GAP = 40;
 const COMBAT_ROOM_LENGTH = 130;
+const PLAYER_FOV = Math.PI/3;
+const PLAYER_VIEW_DISTANCE = 150;
+const RAY_COUNT = 80;
 const canvas = document.querySelector("canvas");
 const ctx = canvas.getContext("2d");
-let rect = canvas.getBoundingClientRect();
 const keys = {
     up: false,
     down: false,
@@ -18,7 +20,8 @@ const player = {
     radius: 8,
     health: 100,
     speed: 2.5,
-    damage: 20
+    damage: 20,
+    gold: 0
 };
 const ENEMY_TYPES = [
   {
@@ -97,6 +100,8 @@ let doors = [];
 let enemies = [];
 let rooms = [];
 let bullets = [];
+let wallSegments = [];
+let lootDrops = [];
 
 function start(){
     if(!isRunning){
@@ -248,7 +253,25 @@ function enemyVision(enemy){
     const playerAngle = Math.atan2(dy,dx);
 
     const angleDiff = normalizeAngle(playerAngle - enemy.facingAngle);
-    return Math.abs(angleDiff)<(enemy.fov)/2;
+    if(Math.abs(angleDiff) > (enemy.fov)/2)
+        return false;
+
+    const segments = wallSegments;
+    const rayDx = Math.cos(playerAngle);
+    const rayDy = Math.sin(playerAngle);
+    
+    for(const seg of segments){
+        const hit = raySegmentIntersection(
+            enemy.x, enemy.y, 
+            rayDx, rayDy, 
+            seg[0], seg[1], seg[2], seg[3]
+        );
+        
+        if(hit && hit.dist < dist){
+            return false; 
+        }
+    }
+    return true;
 }
 
 function circleRectCollision(circle, rect){
@@ -273,6 +296,95 @@ function playerInRoom(room){
     ) return true;
     else
         return false;
+}
+
+function getWallSegments(){
+    const wall_segments = [];
+    for(let j=0; j<4;j++){
+        for(let i=0; i<7; i++){
+            const walls = getRoomWalls(rooms[j][i], doors[j][i]);
+            for(let wall of walls){
+                wall_segments.push([
+                    wall.x, wall.y,
+                    wall.x+wall.width, wall.y
+                ]);
+                wall_segments.push([
+                    wall.x+wall.width, wall.y,
+                    wall.x+wall.width, wall.y+wall.height
+                ]);
+                wall_segments.push([
+                    wall.x+wall.width, wall.y+wall.height,
+                    wall.x, wall.y+wall.height
+                ]);
+                wall_segments.push([
+                    wall.x, wall.y+wall.height,
+                    wall.x, wall.y
+                ]);
+            }
+        }
+    }
+    return wall_segments;
+}
+
+function getVisiblePoints(){
+    const segments = wallSegments;
+    const facingAngle = Math.atan2(mouseY-player.y, mouseX-player.x);
+    const startAngle = facingAngle - PLAYER_FOV/2;
+    const endAngle = facingAngle + PLAYER_FOV/2;
+    const points = [];
+    for(let i=0; i<=RAY_COUNT; i++){
+        const angle = startAngle+PLAYER_FOV*i/RAY_COUNT;
+        const dx = Math.cos(angle);
+        const dy = Math.sin(angle);
+        let closest = {
+            x: player.x + dx*PLAYER_VIEW_DISTANCE,
+            y: player.y + dy*PLAYER_VIEW_DISTANCE,
+            dist: PLAYER_VIEW_DISTANCE
+        };
+        for(let seg of segments){
+            const hit = raySegmentIntersection(player.x, player.y, dx, dy, seg[0], seg[1], seg[2], seg[3]);
+            if(hit && hit.dist<closest.dist){
+                closest = hit;
+            }
+        }
+        points.push(closest);
+    }
+    return points;
+}
+
+function raySegmentIntersection(px, py, dx, dy, x1, y1, x2, y2){
+    const rxs = dx*(y2-y1)-dy*(x2-x1);
+
+    if(Math.abs(rxs)<0.00001){
+        return null;
+    }
+
+    const t = ((x1-px)*(y2-y1)-(y1-py)*(x2-x1))/rxs;
+    const u = ((x1-px)*dy-(y1-py)*dx)/rxs;
+
+    if(t>=0&&u>=0&&u<=1){
+        return{
+            x: px + dx*t,
+            y: py + dy*t,
+            dist: t
+        };
+    }
+    return null;
+}
+
+function drawVisionMask(){
+    const points = getVisiblePoints();
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.95)";
+    ctx.beginPath();
+    ctx.rect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    ctx.moveTo(player.x, player.y);
+    for(const point of points){
+        ctx.lineTo(point.x, point.y);
+    }
+    ctx.closePath();
+    ctx.fill("evenodd");
+    ctx.restore();
 }
 
 function getRoomWalls(room, door){
@@ -373,6 +485,19 @@ function getRoomWalls(room, door){
     }
     return walls;
 }
+
+function drawWalls(){
+    for(let j=0; j<4; j++){
+        for(let i=0; i<7; i++){
+            const walls = getRoomWalls(rooms[j][i], doors[j][i]);
+            for(const wall of walls){
+                ctx.fillStyle = "#444";
+                ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
+            }
+        }
+    }
+}
+
 
 function createRooms(){
     for(let j = 0; j < 4; j++){
@@ -682,8 +807,10 @@ function gameLoop(){
     }
     ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
     drawCombatZones();
+    drawWalls();
     drawEnemies();
     drawBullets();
+    drawVisionMask();
     drawPlayer();
     drawTimer();
     requestAnimationFrame(gameLoop);
@@ -724,10 +851,6 @@ window.addEventListener("keyup", (e) => {
 
 window.addEventListener('resize', scaleCanvas);
 
-window.addEventListener('resize', ()=>{
-    console.log(rect.width);
-});
-
 window.addEventListener("keydown", (e)=>{
     if(e.key.toLowerCase() === 'p'){
         stop();
@@ -744,5 +867,6 @@ scaleCanvas();
 createRooms();
 createEnemies();
 createDoors();
+wallSegments = getWallSegments();
 start();
 gameLoop();
