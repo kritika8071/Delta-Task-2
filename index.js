@@ -8,6 +8,8 @@ const PLAYER_VIEW_DISTANCE = 150;
 const RAY_COUNT = 80;
 const canvas = document.querySelector("canvas");
 const ctx = canvas.getContext("2d");
+const shoot = new Audio("assets/Shooting.mp3");
+const enemyDeath = new Audio("assets/EnemyDeath.mp3");
 const keys = {
     up: false,
     down: false,
@@ -18,7 +20,7 @@ const player = {
     x: 20,
     y: 20,
     radius: 8,
-    health: 100,
+    health: 200,
     speed: 2.5,
     damage: 20,
     gold: 0
@@ -96,6 +98,8 @@ let timer = null;
 let startTime = 0;
 let elapsedTime = 0;
 let isRunning = false;
+let gameState = "playing";
+let finalScore = 0;
 let doors = [];
 let enemies = [];
 let rooms = [];
@@ -136,7 +140,24 @@ function drawTimer(){
     );
 }
 
+function checkWin(){
+    let enemiesAlive = 0;
+    for(let j=0; j<4; j++){
+        for(let i=0; i<7; i++){
+            if(enemies[j][i].alive){
+                enemiesAlive++;
+            }
+        }
+    }
+    if(enemiesAlive === 0){
+        finalScore = player.gold;
+        gameState = "win";
+        stop();
+    }
+}
+
 function createBullet(shooter, targetX, targetY, team="player"){
+    shoot.play();
     const dx = targetX - shooter.x;
     const dy = targetY - shooter.y;
     const angle = Math.atan2(dy,dx);
@@ -180,7 +201,15 @@ function updateBullets(){
                     enemy.health -= bullet.damage;
                     bullets.splice(i,1);
                     if(enemy.health <= 0){
+                        enemyDeath.play();
                         enemy.alive = false;
+                        const goldAmount = Math.floor(Math.random()*10)+5;
+                        lootDrops.push({
+                            x: enemy.x,
+                            y: enemy.y,
+                            value: goldAmount,
+                            radius: 6
+                        });
                     }
                     break;
                 }
@@ -192,7 +221,10 @@ function updateBullets(){
             player.health -= bullet.damage;
             bullets.splice(i,1);
             if(player.health <= 0){
-                console.log("Game Over!");
+                player.health = 0;
+                finalScore = player.gold;
+                gameState = "gameover";
+                stop();
             }
         }
     }
@@ -527,6 +559,27 @@ function drawCombatZones(){
     }
 }
 
+function drawLoot(){
+    for(const loot of lootDrops){
+        ctx.beginPath();
+        ctx.fillStyle = "gold";
+        ctx.arc(loot.x, loot.y, loot.radius, 0, Math.PI*2);
+        ctx.fill();
+        ctx.strokeStyle = "black";
+        ctx.stroke();
+    }
+}
+
+function updateLoot(){
+    for(let i = lootDrops.length-1; i>=0; i--){
+        const loot = lootDrops[i];
+        if(circleCollision(player, loot)){
+            player.gold += loot.value;
+            lootDrops.splice(i,1);
+        }
+    }
+}
+
 function createEnemies(){
     for(let j=0; j<4; j++){
         let rowEnemies=[];
@@ -727,6 +780,7 @@ function drawPlayer(){
     ctx.fillStyle = "white";
     ctx.font = "20px Arial";
     ctx.fillText("Health: " + player.health, 20, 30);
+    ctx.fillText("Gold: "+player.gold, 20, 55);
 }
 
 function movePlayer(){
@@ -776,6 +830,54 @@ function movePlayer(){
         Math.min(GAME_HEIGHT - player.radius, player.y));
 }
 
+function drawGameOverScreen(){
+    ctx.fillStyle = "rgba(0,0,0,0.8)";
+    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    ctx.fillStyle = "red";
+    ctx.font = "60px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("GAME OVER", GAME_WIDTH/2, GAME_HEIGHT/2 - 80);
+    ctx.fillStyle = "white";
+    ctx.font = "30px Arial";
+    ctx.fillText("Final Score: " + finalScore, GAME_WIDTH/2, GAME_HEIGHT/2);
+    ctx.fillText("Press R to Restart", GAME_WIDTH/2, GAME_HEIGHT/2 + 60);
+    ctx.textAlign = "left";
+}
+
+function drawWinScreen(){
+    ctx.fillStyle = "rgba(0,0,0,0.8)";
+    ctx.fillRect( 0, 0, GAME_WIDTH, GAME_HEIGHT);
+    ctx.fillStyle = "lime";
+    ctx.font = "60px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("YOU WIN!", GAME_WIDTH/2, GAME_HEIGHT/2 - 80);
+    ctx.fillStyle = "white";
+    ctx.font = "30px Arial";
+    ctx.fillText("Final Score: " + finalScore, GAME_WIDTH/2, GAME_HEIGHT/2);
+    ctx.fillText("Press R to Restart", GAME_WIDTH/2, GAME_HEIGHT/2 + 60);
+    ctx.textAlign = "left";
+}
+
+function restartGame(){
+    player.x = 20;
+    player.y = 20;
+    player.health = 100;
+    player.gold = 0;
+    bullets = [];
+    lootDrops = [];
+    enemies = [];
+    doors = [];
+    rooms = [];
+    elapsedTime = 0;
+    startTime = Date.now();
+    createRooms();
+    createDoors();
+    createEnemies();
+    wallSegments = getWallSegments();
+    gameState = "playing";
+    start();
+}
+
 function scaleCanvas(){
     const scaleX = window.innerWidth/GAME_WIDTH;
     const scaleY = window.innerHeight/GAME_HEIGHT;
@@ -804,16 +906,24 @@ function gameLoop(){
         movePlayer();
         updateEnemies();
         updateBullets();
+        updateLoot();
+        checkWin();
     }
     ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
     drawCombatZones();
     drawWalls();
     drawEnemies();
     drawBullets();
+    drawLoot();
     drawVisionMask();
     drawPlayer();
     drawTimer();
     requestAnimationFrame(gameLoop);
+    if(gameState === "gameover"){
+        drawGameOverScreen();
+    }
+    if(gameState === "win")
+        drawWinScreen();
 }
 
 canvas.addEventListener('mousemove', (e) => {
@@ -858,10 +968,15 @@ window.addEventListener("keydown", (e)=>{
 });
 
 window.addEventListener("keydown", (e)=>{
-    if(e.key.toLowerCase() === 'r'){
+    if(e.key.toLowerCase() !== "r")
+        return;
+    if(gameState === "gameover" || gameState === "win"){
+        restartGame();
+    }
+    else{
         start();
     }
-})
+});
 
 scaleCanvas();
 createRooms();
